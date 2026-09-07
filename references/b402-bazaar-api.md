@@ -1,6 +1,6 @@
 # B402 Bazaar API — Verified Reference
 
-Verified live on 2026-09-05 by directly querying the endpoints below (not from documentation
+Verified live on 2026-09-06 by directly querying the endpoints below (not from documentation
 alone). This file is the source of truth for field names/shapes — don't re-derive them from
 memory or from the skill's own docstrings.
 
@@ -70,7 +70,7 @@ logic. Until confirmed, `bazaar_client.py`'s `max_usd_price` filter (server-side
 conversion) is the safe way to cap spend — don't hand-roll a decimals conversion in this
 project's own code yet.
 
-## Live snapshot at verification time (2026-09-05) — for context, not to hardcode against
+## Live snapshot at verification time (2026-09-06) — for context, not to hardcode against
 
 27 resources listed, two providers:
 - `api.xona-agent.com` — AI generation (image/audio/video/LLM calls), unrelated to this project's

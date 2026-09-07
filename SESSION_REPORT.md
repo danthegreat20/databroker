@@ -1,5 +1,5 @@
 ## Session 1: Wallet & Skill Verification (repo scaffold + skill definition)
-**Date:** 2026-09-05
+**Date:** 2026-09-06
 **Goal:** Scaffold the Agent-skill-pattern repo and write the data-shopper skill's workflow,
 against a verified (not assumed) B402 Bazaar API — leaving the actual research-question loop for
 Session 2.
@@ -84,7 +84,7 @@ was a scaffolding session only, per the Pre-Flight/Kickoff brief.
   rather than assume it, per the Pre-Flight Checklist.
 - `SKILL.md`'s placeholder payment command has been replaced with the real, verified `baw`
   syntax — if not, Session 2's first job is that verification, not new agent logic.
-- B402 Bazaar's live catalog may have changed since 2026-09-05 (new merchants can appear, unhealthy
+- B402 Bazaar's live catalog may have changed since 2026-09-06 (new merchants can appear, unhealthy
   ones can be dropped) — re-query rather than trusting the snapshot in the reference doc.
 - No mainnet/live spend has occurred yet under this project. The very first real `baw x402`
   payment should be treated as a deliberate, tiny "canary" transaction, not assumed safe just
@@ -97,7 +97,7 @@ Section 8.2.
 ---
 
 ## Session 2: Data-Shopper Agent Logic (orchestration code + offline verification)
-**Date:** 2026-09-05
+**Date:** 2026-09-06
 **Goal:** Turn `SKILL.md`'s prose workflow into real, runnable orchestration code, with spend-limit
 enforcement and decision logging exercised in code — while keeping the one unverified piece (the
 live `baw` payment call) isolated and unimplemented rather than guessed.
@@ -179,5 +179,93 @@ still unconfirmed (see Known stubs/TODOs, carried over).
 - Once `_pay_via_baw` is implemented for real, re-run `test_data_shopper.py` first (it doesn't
   touch that function's live path) as a fast sanity check, then do one manual `--dry-run` pass
   against the live Bazaar (real search, simulated payment) before removing `--dry-run` entirely.
+
+**Style history:** unchanged — N/A.
+
+---
+
+## Session 3: Financial Safety Layer — failure-mode hardening
+**Date:** 2026-09-06
+**Goal:** Close the gaps Session 2's happy-path code left open — a malformed Bazaar item
+crashing the whole run, an ambiguous response shape being mistaken for zero results, a
+repeatedly-failing endpoint being retried forever, and the decision log implying a firmer number
+than can actually be computed yet.
+
+**Assumed true from Sessions 1-2 before building:** `bazaar_client.py`'s discovery functions and
+`data_shopper.py`'s `SpendTracker`/`_log_decision`/`_pay_via_baw` scaffolding from Session 2 are
+correct as far as the offline tests could prove; `/bazaar/search`'s live response key is still
+unconfirmed; no `baw` syntax has been confirmed. Nothing in this session touched the live network
+or resolved either of those.
+
+**Files added/changed:**
+- `scripts/bazaar_client.py` — `_get()` now rejects a missing/malformed `data` field explicitly;
+  new `_extract_items()` distinguishes a genuine empty result from an unexpected response shape
+  (raises `BazaarError` for the latter instead of silently returning `[]`); `_parse_resources()`
+  now skips malformed individual items instead of raising `KeyError` and killing the whole batch,
+  returning them via an optional `on_skipped` callback instead of dropping them silently.
+- `scripts/data_shopper.py` — added a consecutive-failure circuit breaker (default: stop after 2
+  in a row) so a broken endpoint or integration doesn't get retried against every remaining
+  candidate; resources with no `accepts` options are now logged as `failed` instead of proceeding
+  with nothing to pay against; every `paid`/`skipped_over_limit` entry now carries
+  `amount_is_capped_estimate: true` — `amount_usd` is the enforced ceiling from the server-side
+  `maxUsdPrice` filter, not a confirmed exact charge, and the log no longer implies otherwise.
+- `scripts/test_data_shopper.py` — 3 new tests: capped-estimate labeling, circuit-breaker
+  behavior (via a fake urlopen, no network), and malformed-response-shape detection. All 5 tests
+  in the file pass (`python3 test_data_shopper.py`, run this session).
+- `demo/index.html` — amounts now render as `≤$X` when `amount_is_capped_estimate` is true,
+  matching the log instead of overstating certainty; sample data updated to match.
+
+**Current full file tree:** unchanged from Session 2 (no files added or removed, only edited):
+```
+.
+├── .env.example
+├── .gitignore
+├── BUILD_ROADMAP.md
+├── README.md
+├── RESEARCH_BRIEF.md
+├── SESSION_REPORT.md
+├── SKILL.md
+├── demo/
+│   └── index.html
+├── references/
+│   └── b402-bazaar-api.md
+└── scripts/
+    ├── bazaar_client.py
+    ├── data_shopper.py
+    └── test_data_shopper.py
+```
+
+**Dependencies installed:** none — still standard library only.
+
+**Env vars required:** unchanged.
+
+**Agent OS mode:** unchanged — still no live/mainnet call has occurred under this project.
+
+**Sub-account scope & limits:** unchanged in mechanism; hardened in behavior. `SpendTracker`'s
+in-code enforcement now also can't be starved into a bad decision by a broken listing (no-accepts
+case) or a malformed response — those fail loudly and stop the run instead of falling through to
+an unguarded payment attempt.
+
+**Decision log (this session):** No live or testnet action occurred. All 5 offline tests ran
+against fixtures/fakes only; none touched the live network.
+
+**API endpoints live:** unchanged — `/bazaar/search`'s real response key is still unconfirmed
+live; this session added handling for what happens if it's neither of the two documented shapes,
+but did not resolve which one it actually is.
+
+**Known stubs/TODOs (carried over, none resolved this session):**
+- `_pay_via_baw` still unimplemented — same blocker as Sessions 1-2.
+- `/bazaar/search`'s live response key still unconfirmed.
+- Token decimals for `hyreagent.fun`'s asset still unconfirmed — `amount_is_capped_estimate`
+  labeling is this session's mitigation for that gap, not a resolution of it.
+
+**Assumptions carried into next session:**
+- Everything from Sessions 1-2 still applies.
+- Once `_pay_via_baw` is implemented, re-run `test_data_shopper.py` first (still fixture-based,
+  fast) before a live `--dry-run` pass, before removing `--dry-run` entirely — same order as
+  stated in Session 2's report.
+- Session 4 (Polish & Submission) can proceed once the manual wallet step is done; it does not
+  need the token-decimals question resolved first, since the demo can legitimately show `≤$X`
+  figures and explain why in the video.
 
 **Style history:** unchanged — N/A.

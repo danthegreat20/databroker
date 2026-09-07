@@ -108,6 +108,7 @@
       description: "New token launches",
       action: "paid",
       amount_usd: 0.02,
+      amount_is_capped_estimate: true,
       rationale: "Question asked about new launches; closest live feed on the Bazaar.",
       limit_checked_against: "PER_CALL_LIMIT_USD=0.05, session_total=0.02/0.50"
     },
@@ -117,6 +118,7 @@
       description: "Pool recommendations",
       action: "paid",
       amount_usd: 0.02,
+      amount_is_capped_estimate: true,
       rationale: "Cross-checks the launch data against current LP pool recommendations.",
       limit_checked_against: "PER_CALL_LIMIT_USD=0.05, session_total=0.04/0.50"
     },
@@ -126,6 +128,7 @@
       description: "Top performing wallets",
       action: "skipped_over_limit",
       amount_usd: 0.02,
+      amount_is_capped_estimate: true,
       rationale: "Would push session total to 0.06, over the 0.05 per-call rule for this pass.",
       limit_checked_against: "SESSION_LIMIT_USD=0.50, would-be total=0.06 (skipped, not a hard session breach — held back to leave headroom)"
     }
@@ -185,7 +188,7 @@
           <span class="rationale">${e.rationale || ""}</span>
         </span>
         <span class="amount ${e.action}">
-          ${e.action === "failed" ? "—" : "$" + (e.amount_usd ?? 0).toFixed(2)}
+          ${e.action === "failed" ? "—" : (e.amount_is_capped_estimate ? "≤$" : "$") + (e.amount_usd ?? 0).toFixed(2)}
           <span class="status-label">${statusLabel(e.action)}</span>
         </span>
       </li>

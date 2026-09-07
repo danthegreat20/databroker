@@ -97,15 +97,39 @@ def shop_for_data(
     log_path: Path,
     dry_run: bool,
     max_candidates: int = 5,
+    max_consecutive_failures: int = 2,
 ) -> list[dict]:
     """Discover candidates for `keyword`, pay for (or skip/fail) each one in
     turn, logging every decision. Returns the list of entries logged this
-    run (not the cumulative file)."""
+    run (not the cumulative file).
+
+    Stops early after `max_consecutive_failures` in a row — a repeatedly
+    failing endpoint (or a broken Bazaar/baw integration) is a signal to
+    stop and surface the problem, per Section 9.6, not to keep spending
+    attempts against something that isn't working."""
     tracker = SpendTracker(per_call_limit_usd, session_limit_usd)
     run_entries: list[dict] = []
 
+    def skipped_item_logger(skipped: dict) -> None:
+        entry = {
+            "timestamp": _now(),
+            "resource": (skipped.get("raw") or {}).get("resource"),
+            "description": "Malformed Bazaar listing",
+            "action": "failed",
+            "amount_usd": 0,
+            "amount_is_capped_estimate": False,
+            "rationale": skipped["reason"],
+            "limit_checked_against": None,
+        }
+        _log_decision(log_path, entry)
+        run_entries.append(entry)
+
     try:
-        candidates = search(query=keyword, max_usd_price=per_call_limit_usd)
+        candidates = search(
+            query=keyword,
+            max_usd_price=per_call_limit_usd,
+            on_skipped=skipped_item_logger,
+        )
     except BazaarError as exc:
         # Section 9.6: an exchange/API failure is a blocker, not something
         # to route around with fabricated data.
@@ -115,19 +139,47 @@ def shop_for_data(
             "description": f"Bazaar search failed for keyword={keyword!r}",
             "action": "failed",
             "amount_usd": 0,
+            "amount_is_capped_estimate": False,
             "rationale": str(exc),
             "limit_checked_against": None,
         }
         _log_decision(log_path, entry)
-        return [entry]
+        run_entries.append(entry)
+        return run_entries
+
+    consecutive_failures = 0
 
     for resource in candidates[:max_candidates]:
+        if not resource.accepts:
+            entry = {
+                "timestamp": _now(),
+                "resource": resource.resource,
+                "description": resource.description,
+                "action": "failed",
+                "amount_usd": 0,
+                "amount_is_capped_estimate": False,
+                "rationale": "listing has no 'accepts' payment options — nothing to pay against",
+                "limit_checked_against": None,
+            }
+            _log_decision(log_path, entry)
+            run_entries.append(entry)
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                break
+            continue
+
         ok, reason = tracker.check(per_call_limit_usd)
         entry = {
             "timestamp": _now(),
             "resource": resource.resource,
             "description": resource.description,
+            # Server-side max_usd_price filtering guarantees the real price is
+            # <= per_call_limit_usd, but the exact figure isn't computable
+            # locally yet (token decimals unresolved — see reference doc).
+            # amount_usd is therefore an enforced CEILING, not a confirmed
+            # exact charge, until that's resolved.
             "amount_usd": per_call_limit_usd,
+            "amount_is_capped_estimate": True,
             "limit_checked_against": reason,
         }
 
@@ -136,7 +188,7 @@ def shop_for_data(
             entry["rationale"] = reason
             _log_decision(log_path, entry)
             run_entries.append(entry)
-            continue
+            continue  # a self-imposed skip isn't a failure — don't count it toward the breaker
 
         try:
             _pay_via_baw(resource, per_call_limit_usd, dry_run=dry_run)
@@ -145,8 +197,12 @@ def shop_for_data(
             entry["rationale"] = str(exc)
             _log_decision(log_path, entry)
             run_entries.append(entry)
-            continue  # don't keep trying other endpoints blind either — surface it
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                break
+            continue
 
+        consecutive_failures = 0
         tracker.record(per_call_limit_usd)
         entry["action"] = "paid"
         entry["rationale"] = (

@@ -2,7 +2,7 @@
 Offline smoke test for data_shopper.py's control flow: spend tracking,
 skip-over-limit behavior, and decision logging. Does NOT hit the network —
 `search()` is monkeypatched with a fixture built from the real listings
-this project verified live on 2026-09-05 (see ../references/b402-bazaar-api.md).
+this project verified live on 2026-09-06 (see ../references/b402-bazaar-api.md).
 This does not verify the live Bazaar or the payment step; it verifies the
 orchestration logic around them.
 
@@ -105,8 +105,92 @@ def test_shop_for_data_dry_run_logs_correctly(tmp_path: Path):
     print("PASS: test_shop_for_data_dry_run_logs_correctly")
 
 
+def test_amount_is_labeled_as_capped_estimate(tmp_path: Path):
+    """Session 3 fix: amount_usd is an enforced ceiling (server-side
+    max_usd_price filter), not a confirmed exact charge — real decimals are
+    unresolved (see references/b402-bazaar-api.md). Every paid entry must
+    say so via amount_is_capped_estimate, so nothing downstream mistakes an
+    upper bound for an exact figure."""
+    data_shopper.search = fake_search
+    log_path = tmp_path / "decision_log.json"
+    data_shopper.shop_for_data(
+        keyword="new tokens", per_call_limit_usd=0.05, session_limit_usd=0.50,
+        log_path=log_path, dry_run=True,
+    )
+    on_disk = json.loads(log_path.read_text())
+    paid = [e for e in on_disk if e["action"] == "paid"]
+    assert paid, "expected at least one paid entry"
+    assert all(e["amount_is_capped_estimate"] is True for e in paid)
+    print("PASS: test_amount_is_labeled_as_capped_estimate")
+
+
+def test_circuit_breaker_stops_after_consecutive_failures(tmp_path: Path):
+    """A resource with no 'accepts' can't be paid for — two in a row should
+    trip the breaker and stop the run rather than churn through the rest of
+    the candidate list."""
+    broken = BazaarResource(
+        resource="https://mpp.hyreagent.fun/broken/no-accepts",
+        description="Misconfigured listing",
+        x402_version=2,
+        accepts=[],  # no payment options at all
+        last_updated=0,
+    )
+
+    def fake_search_broken(*, query=None, max_usd_price=None, **kwargs):
+        return [broken, broken, FIXTURE[0]]  # third item should never be reached
+
+    data_shopper.search = fake_search_broken
+    log_path = tmp_path / "decision_log.json"
+    entries = data_shopper.shop_for_data(
+        keyword="new tokens", per_call_limit_usd=0.05, session_limit_usd=0.50,
+        log_path=log_path, dry_run=True, max_consecutive_failures=2,
+    )
+    assert len(entries) == 2, f"breaker should stop after 2 failures, got {len(entries)} entries"
+    assert all(e["action"] == "failed" for e in entries)
+    on_disk = json.loads(log_path.read_text())
+    assert len(on_disk) == 2, "the third (never-reached) candidate must not be logged"
+    print("PASS: test_circuit_breaker_stops_after_consecutive_failures")
+
+
+def test_malformed_search_response_is_a_failure_not_empty_results():
+    """A response missing both 'items' and 'resources' must raise, not be
+    silently treated as zero results — otherwise a broken API contract
+    looks identical to 'nothing matched the keyword.'"""
+    import bazaar_client
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = json.dumps(payload).encode("utf-8")
+        def read(self):
+            return self._payload
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(url, timeout=10):
+        return FakeResponse({"success": True, "data": {"somethingElse": []}})
+
+    original_urlopen = bazaar_client.urllib.request.urlopen
+    bazaar_client.urllib.request.urlopen = fake_urlopen
+    try:
+        try:
+            bazaar_client.search(query="x")
+            raise AssertionError("expected BazaarError for missing items/resources key")
+        except bazaar_client.BazaarError as exc:
+            assert "neither" in str(exc)
+    finally:
+        bazaar_client.urllib.request.urlopen = original_urlopen
+    print("PASS: test_malformed_search_response_is_a_failure_not_empty_results")
+
+
 if __name__ == "__main__":
     test_spend_tracker_allows_then_blocks()
     with tempfile.TemporaryDirectory() as d:
         test_shop_for_data_dry_run_logs_correctly(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        test_amount_is_labeled_as_capped_estimate(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        test_circuit_breaker_stops_after_consecutive_failures(Path(d))
+    test_malformed_search_response_is_a_failure_not_empty_results()
     print("\nAll offline smoke tests passed.")

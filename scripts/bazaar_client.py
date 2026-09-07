@@ -1,7 +1,7 @@
 """
 Thin client for Binance's B402 Bazaar public discovery API.
 
-Verified live against the real endpoint on 2026-09-05 — see
+Verified live against the real endpoint on 2026-09-06 — see
 ../references/b402-bazaar-api.md for the confirmed response shape and the
 open questions (token decimals) that are NOT yet resolved.
 
@@ -68,31 +68,65 @@ def _get(path: str, params: dict[str, Any]) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:  # network/HTTP failure
+    except Exception as exc:  # network/HTTP/JSON-decode failure
         raise BazaarError(f"Bazaar request failed: {url} — {exc}") from exc
 
     if not body.get("success", False):
         raise BazaarError(f"Bazaar returned an error envelope: {body}")
+    if "data" not in body or not isinstance(body["data"], dict):
+        raise BazaarError(f"Bazaar response missing/malformed 'data' field: {body}")
     return body["data"]
 
 
-def _parse_resources(items: list[dict[str, Any]]) -> list[BazaarResource]:
-    return [
-        BazaarResource(
-            resource=item["resource"],
-            description=item.get("description", ""),
-            x402_version=item.get("x402Version", 0),
-            accepts=item.get("accepts", []),
-            last_updated=item.get("lastUpdated", 0),
-        )
-        for item in items
-    ]
+def _extract_items(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Distinguishes 'genuinely zero results' from 'unexpected response
+    shape' — per Section 9.6, the latter is a blocker to surface, not
+    something to silently treat as an empty list."""
+    for key in ("items", "resources"):
+        if key in data:
+            value = data[key]
+            if not isinstance(value, list):
+                raise BazaarError(f"Bazaar '{key}' field is not a list: {type(value)}")
+            return value
+    raise BazaarError(
+        f"Bazaar response has neither 'items' nor 'resources' key — unexpected "
+        f"shape, not a real zero-result response. Keys present: {list(data.keys())}"
+    )
 
 
-def list_resources(limit: int = 25, offset: int = 0) -> list[BazaarResource]:
-    """GET /bazaar/resources — confirmed live shape: data.items[]."""
+def _parse_resources(items: list[dict[str, Any]]) -> tuple[list[BazaarResource], list[dict]]:
+    """Parses what it can, skips what it can't, per Section 9.6 (a
+    malformed individual listing is that listing's problem, not a reason to
+    fail the whole batch). Returns (parsed, skipped_raw_items_with_reason)."""
+    parsed: list[BazaarResource] = []
+    skipped: list[dict] = []
+    for item in items:
+        try:
+            parsed.append(
+                BazaarResource(
+                    resource=item["resource"],
+                    description=item.get("description", ""),
+                    x402_version=item.get("x402Version", 0),
+                    accepts=item.get("accepts", []),
+                    last_updated=item.get("lastUpdated", 0),
+                )
+            )
+        except (KeyError, TypeError) as exc:
+            skipped.append({"raw": item, "reason": f"malformed item: {exc}"})
+    return parsed, skipped
+
+
+def list_resources(limit: int = 25, offset: int = 0, on_skipped=None) -> list[BazaarResource]:
+    """GET /bazaar/resources — confirmed live shape: data.items[].
+    `on_skipped`, if given, is called with each malformed item's info
+    instead of it being silently dropped."""
     data = _get("/bazaar/resources", {"limit": limit, "offset": offset})
-    return _parse_resources(data.get("items", []))
+    items = _extract_items(data)
+    parsed, skipped = _parse_resources(items)
+    if skipped and on_skipped:
+        for s in skipped:
+            on_skipped(s)
+    return parsed
 
 
 def search(
@@ -102,11 +136,14 @@ def search(
     scheme: Optional[str] = None,
     pay_to: Optional[str] = None,
     max_usd_price: Optional[float] = None,
+    on_skipped=None,
 ) -> list[BazaarResource]:
     """GET /bazaar/search — per Binance's docs the payload key is
-    data.resources[], NOT data.items[]. This has not been directly confirmed
-    live by this project yet (Section 9.8) — the first real call should log
-    and check the raw response before trusting this parsing."""
+    data.resources[], NOT data.items[]. Only data.items[] (from
+    /bazaar/resources) has been directly confirmed live so far (Section
+    9.8) — _extract_items checks for either key and raises BazaarError if
+    neither is present, rather than silently treating a shape mismatch as
+    zero results."""
     data = _get(
         "/bazaar/search",
         {
@@ -118,8 +155,12 @@ def search(
             "maxUsdPrice": max_usd_price,
         },
     )
-    key = "resources" if "resources" in data else "items"
-    return _parse_resources(data.get(key, []))
+    items = _extract_items(data)
+    parsed, skipped = _parse_resources(items)
+    if skipped and on_skipped:
+        for s in skipped:
+            on_skipped(s)
+    return parsed
 
 
 def _main() -> None:
