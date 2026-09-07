@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Data Shopper — Spend Ledger</title>
+<style>
+  :root {
+    --paper: #12151b;
+    --paper-raised: #181c24;
+    --ink: #e7e5df;
+    --ink-dim: #8a8f9c;
+    --rule: #2a2f3a;
+    --gold: #d4a24c;
+    --skip: #6b7280;
+    --fail: #c96b5a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 56px 28px 80px;
+  }
+  header {
+    font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 20px;
+    margin-bottom: 28px;
+  }
+  header h1 {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+  }
+  header p {
+    font-family: inherit;
+    color: var(--ink-dim);
+    font-size: 15px;
+    margin: 0;
+    line-height: 1.5;
+  }
+  .totals {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--ink-dim);
+    margin: 20px 0 32px;
+    padding: 14px 16px;
+    background: var(--paper-raised);
+    border-radius: 3px;
+  }
+  .totals strong { color: var(--ink); font-weight: 600; }
+  .totals .over { color: var(--fail); }
+  ul.log { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: grid;
+    grid-template-columns: 88px 1fr auto;
+    gap: 16px;
+    align-items: start;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 13px;
+  }
+  .row:last-child { border-bottom: none; }
+  .time { color: var(--ink-dim); white-space: nowrap; }
+  .desc { color: var(--ink); }
+  .desc .resource { display: block; color: var(--ink-dim); font-size: 11px; margin-top: 3px; word-break: break-all; }
+  .desc .rationale { display: block; color: var(--ink-dim); font-size: 12px; margin-top: 6px; line-height: 1.4; font-family: "Iowan Old Style", Georgia, serif; }
+  .amount { text-align: right; white-space: nowrap; font-weight: 600; }
+  .amount.paid { color: var(--gold); }
+  .amount.skipped_over_limit { color: var(--skip); }
+  .amount.failed { color: var(--fail); }
+  .status-label { display: block; font-size: 10px; letter-spacing: 0.04em; font-weight: 400; margin-top: 2px; color: var(--ink-dim); }
+  .empty, .notice {
+    color: var(--ink-dim);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 20px 0;
+  }
+  .notice { border: 1px dashed var(--rule); border-radius: 3px; padding: 16px; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <header>
+      <h1>Data Shopper — Spend Ledger</h1>
+      <p>Every feed the agent considered buying, and what it decided — read from <code>decision_log.json</code>.</p>
+    </header>
+
+    <div id="notice"></div>
+    <div class="totals" id="totals"></div>
+    <ul class="log" id="log"></ul>
+  </div>
+
+<script>
+  const SAMPLE_LOG = [
+    {
+      timestamp: "2026-09-06T14:03:00Z",
+      resource: "https://mpp.hyreagent.fun/bsc/trenches/new-tokens",
+      description: "New token launches",
+      action: "paid",
+      amount_usd: 0.02,
+      rationale: "Question asked about new launches; closest live feed on the Bazaar.",
+      limit_checked_against: "PER_CALL_LIMIT_USD=0.05, session_total=0.02/0.50"
+    },
+    {
+      timestamp: "2026-09-06T14:03:04Z",
+      resource: "https://mpp.hyreagent.fun/bsc/lp/meteora/pools/recommend",
+      description: "Pool recommendations",
+      action: "paid",
+      amount_usd: 0.02,
+      rationale: "Cross-checks the launch data against current LP pool recommendations.",
+      limit_checked_against: "PER_CALL_LIMIT_USD=0.05, session_total=0.04/0.50"
+    },
+    {
+      timestamp: "2026-09-06T14:03:07Z",
+      resource: "https://mpp.hyreagent.fun/bsc/traders/top-wallets",
+      description: "Top performing wallets",
+      action: "skipped_over_limit",
+      amount_usd: 0.02,
+      rationale: "Would push session total to 0.06, over the 0.05 per-call rule for this pass.",
+      limit_checked_against: "SESSION_LIMIT_USD=0.50, would-be total=0.06 (skipped, not a hard session breach — held back to leave headroom)"
+    }
+  ];
+
+  async function loadLog() {
+    try {
+      const res = await fetch("decision_log.json", { cache: "no-store" });
+      if (!res.ok) throw new Error("no log file yet");
+      return { data: await res.json(), sample: false };
+    } catch (e) {
+      return { data: SAMPLE_LOG, sample: true };
+    }
+  }
+
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? iso : d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  }
+
+  function statusLabel(action) {
+    return { paid: "paid", skipped_over_limit: "skipped — over limit", failed: "failed" }[action] || action;
+  }
+
+  function render(entries, isSample) {
+    const noticeEl = document.getElementById("notice");
+    const logEl = document.getElementById("log");
+    const totalsEl = document.getElementById("totals");
+
+    if (isSample) {
+      noticeEl.innerHTML = '<div class="notice">No decision_log.json found next to this page yet — showing SAMPLE data so the layout is reviewable before a real run. Run the skill once to generate a real log.</div>';
+    }
+
+    if (!entries.length) {
+      logEl.innerHTML = '<li class="empty">No entries yet.</li>';
+      totalsEl.textContent = "";
+      return;
+    }
+
+    const paidTotal = entries
+      .filter(e => e.action === "paid")
+      .reduce((sum, e) => sum + (e.amount_usd || 0), 0);
+    const cap = entries[entries.length - 1]?.limit_checked_against?.match(/SESSION_LIMIT_USD=([\d.]+)/);
+    const capVal = cap ? parseFloat(cap[1]) : null;
+
+    totalsEl.innerHTML = `
+      <span>${entries.length} feed${entries.length === 1 ? "" : "s"} considered</span>
+      <span>Spent: <strong>$${paidTotal.toFixed(2)}</strong>${capVal ? ` of $${capVal.toFixed(2)} session cap` : ""}</span>
+    `;
+
+    logEl.innerHTML = entries.map(e => `
+      <li class="row">
+        <span class="time">${fmtTime(e.timestamp)}</span>
+        <span class="desc">
+          ${e.description}
+          <span class="resource">${e.resource}</span>
+          <span class="rationale">${e.rationale || ""}</span>
+        </span>
+        <span class="amount ${e.action}">
+          ${e.action === "failed" ? "—" : "$" + (e.amount_usd ?? 0).toFixed(2)}
+          <span class="status-label">${statusLabel(e.action)}</span>
+        </span>
+      </li>
+    `).join("");
+  }
+
+  loadLog().then(({ data, sample }) => render(data, sample));
+</script>
+</body>
+</html>
