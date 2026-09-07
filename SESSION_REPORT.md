@@ -93,3 +93,91 @@ was a scaffolding session only, per the Pre-Flight/Kickoff brief.
 **Style history:** N/A — no UI-design session has run yet; `demo/index.html` is a functional
 ledger view, not a designed product surface, and doesn't carry a style-history entry under
 Section 8.2.
+
+---
+
+## Session 2: Data-Shopper Agent Logic (orchestration code + offline verification)
+**Date:** 2026-09-05
+**Goal:** Turn `SKILL.md`'s prose workflow into real, runnable orchestration code, with spend-limit
+enforcement and decision logging exercised in code — while keeping the one unverified piece (the
+live `baw` payment call) isolated and unimplemented rather than guessed.
+
+**Assumed true from Session 1 before building (per Section 6 rule 1):** `bazaar_client.py`'s
+`search()`/`list_resources()` functions and response parsing exist and were verified live; the
+`data.items[]` shape is confirmed, `data.resources[]` (used by `/bazaar/search`) is documented but
+still not directly confirmed live; no `baw` CLI syntax has been confirmed. This session did not
+re-verify any of that against the network — see "Known stubs/TODOs" for what's still open.
+
+**Files added/changed:**
+- `scripts/data_shopper.py` — `SpendTracker` (Section 9.4, enforced in code), `_log_decision`
+  (Section 9.5 shape, matches what `demo/index.html` reads), `_pay_via_baw` (the isolated,
+  deliberately unimplemented payment call — raises `NotImplementedError` unless `--dry-run`), and
+  `shop_for_data` tying them together into one pass over search results
+- `scripts/test_data_shopper.py` — offline smoke test; monkeypatches `search()` with a fixture
+  built from the real listings verified live in Session 1 (no network call in this test)
+- `.gitignore` — added (`__pycache__/`, `*.pyc`, `.env`, `decision_log.json`)
+
+**Current full file tree:**
+```
+.
+├── .env.example
+├── .gitignore
+├── BUILD_ROADMAP.md
+├── README.md
+├── RESEARCH_BRIEF.md
+├── SESSION_REPORT.md
+├── SKILL.md
+├── demo/
+│   └── index.html
+├── references/
+│   └── b402-bazaar-api.md
+└── scripts/
+    ├── bazaar_client.py
+    ├── data_shopper.py
+    └── test_data_shopper.py
+```
+
+**Dependencies installed:** None — still Python standard library only (`argparse`, `json`,
+`pathlib`, `datetime`).
+
+**Env vars required:** unchanged from Session 1 (`PER_CALL_LIMIT_USD`, `SESSION_LIMIT_USD`,
+`BAW_WALLET_ADDRESS`).
+
+**Agent OS mode:** unchanged from Session 1 — no live/mainnet call has occurred under this
+project yet. `data_shopper.py`'s CLI refuses to run without `--dry-run` while `_pay_via_baw` is
+unimplemented, specifically to prevent an accidental live call.
+
+**Sub-account scope & limits:** unchanged from Session 1. `SpendTracker` now enforces
+`PER_CALL_LIMIT_USD` / `SESSION_LIMIT_USD` **in code** (verified by
+`test_spend_tracker_allows_then_blocks`, which confirms a third call is blocked once two calls at
+the per-call limit reach the session cap) — this satisfies Section 9.4's "enforced in code, not
+just declared," though only against a fixture, not a live run yet.
+
+**Decision log (this session):** No live or testnet payment action occurred. The offline test run
+logged 3 fixture decisions (2 `paid`/dry-run, 1 `skipped_over_limit`) to a temp file for
+verification purposes only — not a real decision log, and not committed to the repo.
+
+**API endpoints live:** unchanged from Session 1. Note: this session did **not** re-hit the live
+Bazaar — `search()` was monkeypatched for the test, so `/bazaar/search`'s real response shape is
+still unconfirmed (see Known stubs/TODOs, carried over).
+
+**Known stubs/TODOs:**
+- `_pay_via_baw` in `scripts/data_shopper.py` is the same unverified placeholder as `SKILL.md`
+  step 4 — now isolated into one function so implementing it later is a one-function change.
+- `/bazaar/search`'s live response key (`data.resources[]` vs `data.items[]`) is still unconfirmed
+  — carried over from Session 1, not addressed this session.
+- Token decimals for USD accounting — carried over from Session 1, still unresolved.
+- `data_shopper.py` has not been run against the live network in this sandbox (no network access
+  here); only the offline, fixture-based path has been exercised.
+
+**Assumptions carried into next session:**
+- Everything carried from Session 1 (manual wallet setup, `baw` syntax confirmation) still
+  applies — none of it has been resolved by this session's work.
+- The first real (non-dry-run) invocation of `data_shopper.py` should be treated as the "canary"
+  transaction mentioned in Session 1's report, on a machine with real network access and a signed-
+  in `baw` CLI — not in this sandbox.
+- Once `_pay_via_baw` is implemented for real, re-run `test_data_shopper.py` first (it doesn't
+  touch that function's live path) as a fast sanity check, then do one manual `--dry-run` pass
+  against the live Bazaar (real search, simulated payment) before removing `--dry-run` entirely.
+
+**Style history:** unchanged — N/A.
