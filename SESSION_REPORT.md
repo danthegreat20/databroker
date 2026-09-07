@@ -269,3 +269,69 @@ but did not resolve which one it actually is.
   figures and explain why in the video.
 
 **Style history:** unchanged — N/A.
+
+---
+
+## Session 4: Polish & Submission (video script, README, licensing)
+**Date:** 2026-09-06
+**Goal:** Everything buildable without the `baw` verification, finished — video script, README
+polish, license, pre-submission checklist. This is the last session that doesn't need the manual
+wallet step; what remains after this genuinely can't be done from this sandbox.
+
+**Assumed true from Sessions 1-3:** all carried-over blockers still apply (`_pay_via_baw`
+unverified, `/bazaar/search`'s response key unconfirmed, token decimals unresolved). Nothing in
+this session touched code logic — this was documentation, licensing, and submission prep only.
+
+**Files added/changed:**
+- `VIDEO_SCRIPT.md` — scene-by-scene demo recording plan, explicitly instructing an honest
+  on-camera caveat if recording in `--dry-run` mode rather than hiding it
+- `LICENSE` — MIT
+- `README.md` — added a submission blurb section, a "running the tests" section, a pre-submission
+  checklist, and updated the file tree to include this session's additions
+
+**Current full file tree:**
+```
+.
+├── .env.example
+├── .gitignore
+├── BUILD_ROADMAP.md
+├── LICENSE
+├── README.md
+├── RESEARCH_BRIEF.md
+├── SESSION_REPORT.md
+├── SKILL.md
+├── VIDEO_SCRIPT.md
+├── demo/
+│   └── index.html
+├── references/
+│   └── b402-bazaar-api.md
+└── scripts/
+    ├── bazaar_client.py
+    ├── data_shopper.py
+    └── test_data_shopper.py
+```
+
+**Dependencies installed:** none.
+
+**Env vars required:** unchanged.
+
+**Agent OS mode:** unchanged — still no live/mainnet call has occurred under this project.
+
+**Sub-account scope & limits:** unchanged.
+
+**Decision log (this session):** none — no code ran this session.
+
+**API endpoints live:** unchanged.
+
+**Known stubs/TODOs (unresolved, same as Session 3):**
+- `_pay_via_baw` still unimplemented — the one item that blocks a fully-live demo.
+- `/bazaar/search`'s live response key still unconfirmed.
+- Token decimals still unconfirmed.
+
+**Assumptions carried into next session:** there is no Session 5 on the roadmap. If the wallet
+step gets done, the remaining work is: implement `_pay_via_baw` per its docstring, re-run
+`test_data_shopper.py`, do one live `--dry-run` pass, then one real pass, then record the video
+per `VIDEO_SCRIPT.md` and submit. None of that requires another full build session — it's one
+function plus a recording, not new architecture.
+
+**Style history:** unchanged — N/A.
